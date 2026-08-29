@@ -65,7 +65,7 @@ Create directories as needed and load every available source before asking xAI:
 - Every brief, source file, manifest, and test under `output/taskmarket-hooks/`.
 - All local manifests matching `hook-registry/manifests/**/*.json`.
 - The last 30 days of `memory/logs/` for either TaskMarket hook skill, plus all-time idea/deploy state above.
-- The official submitted-hook registry at `https://raw.githubusercontent.com/daydreamsai/taskmarket/main/hook-registry/generated/registry.json`, plus open hook-listing issues and PRs when GitHub access is available. Include open submissions so a not-yet-merged idea is still treated as tried.
+- The official submitted-hook registry at `https://raw.githubusercontent.com/daydreamsai/taskmarket/main/hook-registry/generated/registry.json`, plus open hook-listing issues and PRs **when the current GitHub credentials can read them**. This source may be auth-walled and is optional/fail-soft; never require it to complete the run. When accessible, include open submissions so a not-yet-merged idea is still treated as tried.
 - The observed Base-mainnet Hooklist snapshot at `https://raw.githubusercontent.com/Calcutatator/taskmarket-hooklist/main/public/registry.json` and the public task API at `https://api.taskmarket.dev/api/tasks?limit=100`. Keep this observed-task corpus distinct from the official submitted-hook registry. Follow the task API's documented cursor/page mechanism until exhaustion; if it exposes no cursor, increase to its accepted maximum and record that the corpus may be truncated or limited to the API's public status view. Capture page/count/truncation status plus observed addresses, names, descriptions, callback claims, categories, source links, and repeated task usage. A registry entry proves discovery, not safety, authorship, audit, or endorsement.
 
 For each prior or observed hook, normalize a semantic fingerprint from:
@@ -74,7 +74,7 @@ For each prior or observed hook, normalize a semantic fingerprint from:
 
 Lowercase it, normalize synonyms (`allowlist`/`whitelist`, `receipt`/`attestation`), sort unordered elements, and hash the result. Title changes do not create novelty. Treat a candidate as a duplicate when its fingerprint matches or its mechanism and user outcome are materially the same. A candidate may revisit a prior concept only when the new primitive changes the behavior, not merely the branding; say what changed.
 
-If a public source fails, record the exact HTTP/parse reason and continue with the other dedup sources. Never turn a failed registry read into “nothing similar exists.”
+If a public or optional authenticated source fails, record the exact HTTP/auth/parse reason and continue with the remaining local and public dedup sources. Never turn an inaccessible registry into “nothing similar exists.”
 
 ### 2. Call xAI Responses API — required
 

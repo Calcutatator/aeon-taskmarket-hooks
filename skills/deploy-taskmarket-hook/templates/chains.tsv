@@ -1,6 +1,6 @@
 # TaskMarket hook targets. Columns are TAB-separated:
-# name  chainId  testnet  TaskMarketDiamond  expectedDiamondRuntimeCodehash  revision  USDC  rpc  explorer  alchemySlug
+# name  chainId  testnet  TaskMarketDiamond  expectedDiamondRuntimeCodehash  revision  USDC  publicRpc  explorer
 # The runtime codehash, revision, USDC identity, and code-backed selector routes are
 # checked before every rehearsal or broadcast; any mismatch fails closed.
-base	8453	false	0xDDc6cC3e4D11c1f3527B867C7DAD4ED9869C33f7	0x04304a177e7ca8d5bf728ec3a4ae834f3af28925140c6613ee6cfb4574d1b75d	20	0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913	https://mainnet.base.org	https://basescan.org	base-mainnet
-base-sepolia	84532	true	0x0A24E9c3b9E31B8258329e187470ACc16497Cec7	0x04304a177e7ca8d5bf728ec3a4ae834f3af28925140c6613ee6cfb4574d1b75d	20	0x036CbD53842c5426634e7929541eC2318f3dCF7e	https://sepolia.base.org	https://sepolia.basescan.org	base-sepolia
+base	8453	false	0xDDc6cC3e4D11c1f3527B867C7DAD4ED9869C33f7	0x04304a177e7ca8d5bf728ec3a4ae834f3af28925140c6613ee6cfb4574d1b75d	20	0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913	https://mainnet.base.org	https://basescan.org
+base-sepolia	84532	true	0x0A24E9c3b9E31B8258329e187470ACc16497Cec7	0x04304a177e7ca8d5bf728ec3a4ae834f3af28925140c6613ee6cfb4574d1b75d	20	0x036CbD53842c5426634e7929541eC2318f3dCF7e	https://sepolia.base.org	https://sepolia.basescan.org

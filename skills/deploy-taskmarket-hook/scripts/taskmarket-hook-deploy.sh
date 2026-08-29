@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # taskmarket-hook-deploy.sh — secret-expansion-safe TaskMarket hook pipeline.
 #
-# Usage:
-#   bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh simulate [base-sepolia|base]
-#   bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh broadcast <base-sepolia|base>
-#   bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh chains
+# Internal runner. Operators invoke the hash-checking run.mjs launcher documented
+# in SKILL.md; direct invocation is reserved for pack development and tests.
 #
 # The community pack keeps this runner inside the installed skill. It reads the
 # burner key internally, so the agent never expands a secret in command text.
@@ -20,8 +18,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT="$(cd "$SKILL_DIR/../.." && pwd)"
 TMP_BASE="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-DIR="${TASKMARKET_HOOKBUILD_DIR:-$TMP_BASE/aeon-taskmarket-hookbuild}"
+STATE_FILE="${TASKMARKET_HOOKBUILD_STATE_FILE:-$TMP_BASE/aeon-taskmarket-hookbuild.active}"
+DIR="${TASKMARKET_HOOKBUILD_DIR:-}"
 ITMP_HOOK_INTERFACE_ID="0x2187b4de"
+FOUNDRY_VERSION="1.7.1"
+BUILD_SENTINEL="aeon-taskmarket-hooks:1.0.0"
 TASKMARKET_PIN="a85cc8dae76e0fc6da9e463375fd2e385710d442"
 OPENZEPPELIN_PIN="fcbae5394ae8ad52d8e580a3477db99814b9d565"
 OPENZEPPELIN_UPGRADEABLE_PIN="7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf"
@@ -29,10 +30,12 @@ FORGE_STD_PIN="1801b0541f4fda118a10798fd3486bb7051c5dd6"
 PINNED_DEPENDENCY_TREE_SHA256="1e93330f0501a38953487c99ef89286e11c6dca9c4f02eafb53a666fd5d727a2"
 CREATE2_FACTORY="0x4e59b44847b379578588920cA78FbF26c0B4956C"
 BASE_HOOK_SHA256="497d95f00940c968352e92f202bbe14a020fdfc855b860a4d7a6964a58cc05de"
-DEPLOY_SCRIPT_SHA256="b535d4e2b472824741cdd4d2012685e4ead19b62037df4c80ffca3e7dfd9a9d0"
+DEPLOY_SCRIPT_SHA256="6188d421aff01a5841b0302a279a3729bb7038a1f69c4abe3f17d8dd3b240689"
+BROADCAST_SCRIPT_SHA256="741858b30275dd7319af7d055dff344b7f3942aacf32b6c086c7c2a7c445c225"
+MANIFEST_TEMPLATE_SHA256="55f9ce59e941bdfcbfed43bbae6a652759a99d3552a8239db35742ae81d70245"
 FOUNDRY_CONFIG_SHA256="90ced724393dc3ff0a2754f0ba881aee444533eaa2fe1f67f2880548f0b7fe2b"
 REMAPPINGS_SHA256="a7e3c537fcb2ca2d83d7d385b2650551e4d9b9fb329c437d16576bb3923b42b8"
-CHAINS_SHA256="35cc6ebbd882bfd96d2bd08dc0e1a62f98535daf192de4f1fca7765989ed01a7"
+CHAINS_SHA256="73ccab69dc8ce7695551dc78f27f6f33237efc2fcc5c930ef7e251d0c0c6aba7"
 CALLBACK_HARNESS_SHA256="7217fa109c2ef7bc48b694911d84f53966b7516b23167076ac8ed0d14622dc76"
 DIAMOND_HARNESS_SHA256="1e03a4c7c90a595f7014d74088b38360897776a56a3fdba1e5813cb587381ae8"
 FORK_HARNESS_SHA256="8f8c9d1cfee6b312eabe624c24d5cbd07da6596eee88b89d0a6ffbe8b10f984b"
@@ -89,7 +92,7 @@ assert_static_file() {
 assert_static_file "$CHAINS" "$CHAINS_SHA256" "chain registry" || exit 5
 
 list_chains() {
-  awk -F'\t' '!/^#/ && NF>=10 {printf "  %-14s chain=%-7s %s revision=%s diamond=%s\n", $1, $2, ($3=="true"?"testnet":"MAINNET"), $6, $4}' "$CHAINS"
+  awk -F'\t' '!/^#/ && NF>=9 {printf "  %-14s chain=%-7s %s revision=%s diamond=%s\n", $1, $2, ($3=="true"?"testnet":"MAINNET"), $6, $4}' "$CHAINS"
 }
 if [ "$MODE" = "chains" ]; then
   echo "known TaskMarket hook targets:"
@@ -103,25 +106,46 @@ if [ -z "$row" ]; then
   { echo "unknown TaskMarket chain: $CHAIN"; list_chains; } >&2
   exit 4
 fi
-IFS=$'\t' read -r _CN CHAIN_ID TESTNET DIAMOND EXPECTED_DIAMOND_CODEHASH EXPECTED_REVISION EXPECTED_USDC RPC EXPLORER ALCHEMY <<<"$row"
+IFS=$'\t' read -r _CN CHAIN_ID TESTNET DIAMOND EXPECTED_DIAMOND_CODEHASH EXPECTED_REVISION EXPECTED_USDC RPC EXPLORER <<<"$row"
 
 resolve_rpc() {
   [ -n "${TASKMARKET_RPC_URL:-}" ] && { echo "$TASKMARKET_RPC_URL"; return; }
-  if [ -n "${ALCHEMY_API_KEY:-}" ] && [ -n "$ALCHEMY" ]; then
-    echo "https://${ALCHEMY}.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
-    return
-  fi
   echo "$RPC"
 }
 RPC_URL="$(resolve_rpc)"
 RPC_LABEL="$(printf '%s' "$RPC_URL" | sed -E 's#(https?://[^/]+).*#\1#')"
 export FORGE_ETHERSCAN_API_KEY="${ETHERSCAN_API_KEY:-}"
 
-[ -d "$DIR" ] || { echo "staged project missing at $DIR; run $SCRIPT_DIR/stage.sh first" >&2; exit 3; }
-[ -f "$DIR/foundry-bin.path" ] || { echo "missing staged Foundry path; run $SCRIPT_DIR/stage.sh first" >&2; exit 3; }
-FOUNDRY_BIN="$(sed -n '1p' "$DIR/foundry-bin.path")"
+[ -n "$DIR" ] || { [ -f "$STATE_FILE" ] && DIR="$(sed -n '1p' "$STATE_FILE")"; }
+[ -n "$DIR" ] && [ -d "$DIR" ] || { echo "staged project missing; run the launcher's stage command first" >&2; exit 3; }
+[ -f "$DIR/.aeon-taskmarket-hookbuild" ] \
+  && [ "$(tr -d '\r\n' < "$DIR/.aeon-taskmarket-hookbuild")" = "$BUILD_SENTINEL" ] \
+  || { echo "build directory lacks the expected ownership sentinel" >&2; exit 3; }
+
+resolve_foundry_archive_sha256() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os/$arch" in
+    Linux/x86_64) echo "cf7e688ed0c4c48adffca788b496076e31060b67ac5afe1e43dbb5499c20c88b" ;;
+    Linux/aarch64|Linux/arm64) echo "c8fe8fa09ae3aba2c81b510c6f9da3a9d468029b9580e690b245b3f0aea687ae" ;;
+    Darwin/x86_64) echo "c7fd1f5c9bf718d30b5cb6fc94eac605039de2aa50afc4c545a4dddc1e411acb" ;;
+    Darwin/arm64) echo "eacdc67718fac857cad9e19c7f6729dd80de731d09df81856391d093cfcab547" ;;
+    *) echo "unsupported Foundry platform: $os/$arch" >&2; return 1 ;;
+  esac
+}
+
+FOUNDRY_ARCHIVE="$DIR/toolchain/foundry-v${FOUNDRY_VERSION}.tar.gz"
+[ -f "$FOUNDRY_ARCHIVE" ] || { echo "pinned Foundry archive is missing" >&2; exit 3; }
+EXPECTED_FOUNDRY_ARCHIVE_SHA256="$(resolve_foundry_archive_sha256)" || exit 3
+OBSERVED_FOUNDRY_ARCHIVE_SHA256="$(sha256_file "$FOUNDRY_ARCHIVE")"
+[ "$OBSERVED_FOUNDRY_ARCHIVE_SHA256" = "$EXPECTED_FOUNDRY_ARCHIVE_SHA256" ] || {
+  echo "pinned Foundry archive checksum mismatch" >&2; exit 3;
+}
+FOUNDRY_BIN="$(mktemp -d "$DIR/toolchain/run-bin.XXXXXX")"
+tar -xzf "$FOUNDRY_ARCHIVE" -C "$FOUNDRY_BIN"
 [ -x "$FOUNDRY_BIN/forge" ] && [ -x "$FOUNDRY_BIN/cast" ] \
-  || { echo "staged Foundry binaries are unavailable" >&2; exit 3; }
+  || { echo "verified Foundry archive was incomplete" >&2; exit 3; }
 export PATH="$FOUNDRY_BIN:$PATH"
 [ -f "$DIR/taskmarket.commit" ] || { echo "missing staged TaskMarket dependency pin" >&2; exit 3; }
 [ "$(tr -d '[:space:]' < "$DIR/taskmarket.commit")" = "$TASKMARKET_PIN" ] || {
@@ -137,6 +161,8 @@ cd "$DIR"
 # deliberately editable; key-bearing infrastructure is not.
 assert_static_file "lib/taskmarket-contracts/src/hooks/base/BaseTMPHook.sol" "$BASE_HOOK_SHA256" "BaseTMPHook" || exit 5
 assert_static_file "script/DeployHook.s.sol" "$DEPLOY_SCRIPT_SHA256" "deploy script" || exit 5
+assert_static_file "script/BroadcastHook.s.sol" "$BROADCAST_SCRIPT_SHA256" "broadcast script" || exit 5
+assert_static_file "hook-manifest.template.json" "$MANIFEST_TEMPLATE_SHA256" "manifest template" || exit 5
 assert_static_file "foundry.toml" "$FOUNDRY_CONFIG_SHA256" "Foundry config" || exit 5
 assert_static_file "remappings.txt" "$REMAPPINGS_SHA256" "remappings" || exit 5
 assert_static_file "test/HookLifecycle.t.sol" "$CALLBACK_HARNESS_SHA256" "callback harness" || exit 5
@@ -164,10 +190,6 @@ OBSERVED_DEP_TREE="$(dependency_tree_sha256)" || { echo "could not hash staged d
 }
 
 EVIDENCE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/taskmarket-hook-evidence.XXXXXX")"
-cleanup_evidence_tmp() {
-  rm -rf -- "$EVIDENCE_TMP"
-}
-trap cleanup_evidence_tmp EXIT
 
 # Capture each gate verbatim while preserving shell-function side effects such
 # as FORK_BLOCK. Avoiding a pipeline here is intentional: a piped function runs
@@ -381,16 +403,17 @@ run_logged "$EVIDENCE_TMP/fork-rehearsal.log" env NO_COLOR=1 \
   --fork-block-number "$FORK_BLOCK" \
   || { echo "fork rehearsal failed" >&2; exit 7; }
 
-# Simulation always uses Anvil's public throwaway key. The real burner is not
-# read until after the raw workflow arm proof has passed.
-SIMULATION_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-
 run_script() {
-  local broadcast="$1" log="$2" signing_key="$3"
-  local args=(script script/DeployHook.s.sol:DeployHook --rpc-url "$RPC_URL" --fork-block-number "$FORK_BLOCK" --private-key "$signing_key")
-  [ "$broadcast" = "true" ] && args+=(--broadcast --slow)
+  local broadcast="$1" log="$2" script_target
+  local args
+  script_target="script/DeployHook.s.sol:DeployHook"
+  args=(script "$script_target" --rpc-url "$RPC_URL" --fork-block-number "$FORK_BLOCK")
+  if [ "$broadcast" = "true" ]; then
+    script_target="script/BroadcastHook.s.sol:BroadcastHook"
+    args=(script "$script_target" --rpc-url "$RPC_URL" --broadcast --slow)
+  fi
   set +e
-  TASKMARKET_DIAMOND="$DIAMOND" forge "${args[@]}" 2>&1 | tee "$log"
+  TASKMARKET_DIAMOND="$DIAMOND" TASKMARKET_CHAIN_ID="$CHAIN_ID" forge "${args[@]}" 2>&1 | tee "$log"
   local rc=${PIPESTATUS[0]}
   set -e
   return "$rc"
@@ -398,7 +421,7 @@ run_script() {
 
 SIM_LOG="$EVIDENCE_TMP/deterministic-simulation.log"
 echo "── deterministic CREATE2 fork simulation ──"
-run_script false "$SIM_LOG" "$SIMULATION_KEY" || {
+run_script false "$SIM_LOG" || {
   rc=$?; rm -f "$SIM_LOG"; echo "deployment simulation failed" >&2; exit "$rc";
 }
 SIM_ADDR="$(grep -oE '0x[a-fA-F0-9]{40}' <(grep -E '(^|[[:space:]])(hook|ALREADY_DEPLOYED)([[:space:]]|$)' "$SIM_LOG") | head -1 || true)"
@@ -420,7 +443,9 @@ persist_simulation_evidence() {
   cp lib/taskmarket-contracts/src/hooks/base/BaseTMPHook.sol "$out/BaseTMPHook.sol"
   cp test/HookBehavior.t.sol test/HookFixture.sol test/HookLifecycle.t.sol \
     test/HookDiamondLifecycle.t.sol test/HookFork.t.sol "$out/"
-  cp script/DeployHook.s.sol foundry.toml remappings.txt taskmarket.commit taskmarket-chains.tsv "$out/"
+  cp script/DeployHook.s.sol script/BroadcastHook.s.sol hook-manifest.template.json \
+    foundry.toml remappings.txt taskmarket.commit taskmarket-chains.tsv "$out/"
+  cp hook-manifest.template.json "$out/hook-manifest.draft.json"
   printf '%s\n' "$EXPECTED_DEP_TREE" > "$out/dependency-tree.sha256"
   {
     forge --version
@@ -468,9 +493,10 @@ persist_simulation_evidence() {
     --argjson callbackGas "$callback_gas_json" --argjson maxCallbackGas "$MAX_CALLBACK_GAS" \
     --arg taskmarketPin "$TASKMARKET_PIN" --arg openzeppelinPin "$OPENZEPPELIN_PIN" \
     --arg openzeppelinUpgradeablePin "$OPENZEPPELIN_UPGRADEABLE_PIN" --arg forgeStdPin "$FORGE_STD_PIN" \
+    --arg foundryVersion "$FOUNDRY_VERSION" --arg foundryArchiveSha256 "$EXPECTED_FOUNDRY_ARCHIVE_SHA256" \
     --arg dependencyTreeSha256 "$EXPECTED_DEP_TREE" --arg hookSourceSha256 "$(sha256_file src/Hook.sol)" \
     --arg behaviorSourceSha256 "$(sha256_file test/HookBehavior.t.sol)" \
-    '{schemaVersion:1,mode:"simulate",status:"passed",broadcast:false,generatedAt:$generatedAt,chain:$chain,chainId:$chainId,rpc:$rpc,explorer:$explorer,taskmarketDiamond:$diamond,taskmarketDiamondRuntimeCodehash:$diamondCodehash,taskmarketDiamondRevision:$diamondRevision,taskmarketUsdc:$usdc,selectorRoutes:$selectorRoutes,fork:{block:$forkBlock,blockHash:$forkBlockHash},liveDefaults:{hooks:$defaults,count:$defaultCount,customSlotsRemaining:$customSlots},deployment:{predictedHook:$hook,create2Factory:$create2Factory,salt:$create2Salt,initCodeHash:$initCodeHash,runtimeCodehash:$runtimeCodehash,itmpHookInterfaceId:$interfaceId},gates:{sourceReview:"passed",format:"passed",build:"passed",runtimeReview:"passed",behavior:{status:"passed",executedTests:$behaviorNames,positivePassed:$positivePassed,negativePassed:$negativePassed},callbackConformance:{status:"passed",measurements:$callbackGas,maximumMeasuredGas:$maxCallbackGas},localDiamondLifecycle:"passed",forkRehearsal:"passed",deterministicDeployment:"passed"},pins:{taskmarketContracts:$taskmarketPin,openzeppelinContracts:$openzeppelinPin,openzeppelinContractsUpgradeable:$openzeppelinUpgradeablePin,forgeStd:$forgeStdPin,dependencyTreeSha256:$dependencyTreeSha256},sourceHashes:{hookSol:$hookSourceSha256,hookBehaviorTest:$behaviorSourceSha256},securityReview:"automated-only",registryStatus:"unlisted",sourceVerification:false,protocolDefault:false}' \
+    '{schemaVersion:1,mode:"simulate",status:"passed",broadcast:false,generatedAt:$generatedAt,chain:$chain,chainId:$chainId,rpc:$rpc,explorer:$explorer,taskmarketDiamond:$diamond,taskmarketDiamondRuntimeCodehash:$diamondCodehash,taskmarketDiamondRevision:$diamondRevision,taskmarketUsdc:$usdc,selectorRoutes:$selectorRoutes,fork:{block:$forkBlock,blockHash:$forkBlockHash},liveDefaults:{hooks:$defaults,count:$defaultCount,customSlotsRemaining:$customSlots},deployment:{predictedHook:$hook,create2Factory:$create2Factory,salt:$create2Salt,initCodeHash:$initCodeHash,runtimeCodehash:$runtimeCodehash,itmpHookInterfaceId:$interfaceId},gates:{sourceReview:"passed",format:"passed",build:"passed",runtimeReview:"passed",behavior:{status:"passed",executedTests:$behaviorNames,positivePassed:$positivePassed,negativePassed:$negativePassed},callbackConformance:{status:"passed",measurements:$callbackGas,maximumMeasuredGas:$maxCallbackGas},localDiamondLifecycle:"passed",forkRehearsal:"passed",deterministicDeployment:"passed"},pins:{foundryVersion:$foundryVersion,foundryArchiveSha256:$foundryArchiveSha256,taskmarketContracts:$taskmarketPin,openzeppelinContracts:$openzeppelinPin,openzeppelinContractsUpgradeable:$openzeppelinUpgradeablePin,forgeStd:$forgeStdPin,dependencyTreeSha256:$dependencyTreeSha256},sourceHashes:{hookSol:$hookSourceSha256,hookBehaviorTest:$behaviorSourceSha256},securityReview:"automated-only",registryStatus:"unlisted",sourceVerification:false,protocolDefault:false}' \
     > "$evidence_json_tmp"
   mv "$evidence_json_tmp" "$out/simulation-evidence.json"
   echo "dry-run evidence: $out"
@@ -492,7 +518,6 @@ if [ -z "${HOOK_DEPLOYER_PRIVATE_KEY:-}" ]; then
   echo "set HOOK_DEPLOYER_PRIVATE_KEY to broadcast" >&2
   exit 9
 fi
-KEY="$HOOK_DEPLOYER_PRIVATE_KEY"
 
 # Triple mainnet lock: broadcast mode (arm:) + explicit chain + operator variable.
 if [ "$TESTNET" != "true" ]; then
@@ -513,7 +538,21 @@ fi
 # the irreversible call so target drift invalidates the earlier rehearsal.
 preflight_target || { echo "target changed after rehearsal; broadcast cancelled" >&2; exit 7; }
 
-DEPLOYER="$(cast wallet address --private-key "$KEY")"
+KEY_PREFLIGHT_LOG="$(mktemp)"
+set +e
+TASKMARKET_DIAMOND="$DIAMOND" TASKMARKET_CHAIN_ID="$CHAIN_ID" \
+  forge script script/BroadcastHook.s.sol:BroadcastHook --rpc-url "$RPC_URL" >"$KEY_PREFLIGHT_LOG" 2>&1
+KEY_PREFLIGHT_RC=$?
+set -e
+cat "$KEY_PREFLIGHT_LOG"
+[ "$KEY_PREFLIGHT_RC" -eq 0 ] || {
+  rm -f "$KEY_PREFLIGHT_LOG"
+  echo "armed deployer preflight failed" >&2
+  exit 10
+}
+DEPLOYER="$(grep -oE '0x[a-fA-F0-9]{40}' <(grep -E '(^|[[:space:]])deployer([[:space:]]|:)' "$KEY_PREFLIGHT_LOG") | head -1 || true)"
+rm -f "$KEY_PREFLIGHT_LOG"
+[ -n "$DEPLOYER" ] || { echo "armed deployer preflight did not report an address" >&2; exit 10; }
 BAL_WEI="$(cast balance "$DEPLOYER" --rpc-url "$RPC_URL")"
 [ "$BAL_WEI" != "0" ] || { echo "deployer $DEPLOYER is unfunded on $CHAIN" >&2; exit 10; }
 echo "deployer=$DEPLOYER balanceWei=$BAL_WEI"
@@ -532,7 +571,7 @@ fi
 
 SIM_ADDR_LOWER="$(printf '%s' "$SIM_ADDR" | tr '[:upper:]' '[:lower:]')"
 ATTEMPT_OUT="$OUTPUT_ROOT/$CHAIN_ID/$SIM_ADDR_LOWER"
-RUNJSON="broadcast/DeployHook.s.sol/$CHAIN_ID/run-latest.json"
+RUNJSON="broadcast/BroadcastHook.s.sol/$CHAIN_ID/run-latest.json"
 PRE_NONCE="$(cast nonce "$DEPLOYER" --rpc-url "$RPC_URL")"
 PRE_PENDING_NONCE="$(cast nonce "$DEPLOYER" --block pending --rpc-url "$RPC_URL")"
 PRE_CODE="$(cast code "$SIM_ADDR" --rpc-url "$RPC_URL")"
@@ -557,7 +596,7 @@ if [ -n "$PRE_CODE" ] && [ "$PRE_CODE" != "0x" ]; then
   BROADCAST_STATUS="already-deployed"
 else
   echo "── broadcast ──"
-  if run_script true "$BROADCAST_LOG" "$KEY"; then
+  if run_script true "$BROADCAST_LOG"; then
     BROADCAST_RC=0
   else
     BROADCAST_RC=$?

@@ -1,0 +1,120 @@
+{
+  "x-draft": {
+    "reason": "Replace every x-template value and zero deployment field with evidence from this exact build before submission. Drafts are never publishable."
+  },
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Generated TaskMarket Hook",
+    "slug": "generated-taskmarket-hook",
+    "version": "1.0.0",
+    "description": "A direct immutable TaskMarket V1 policy or observation hook."
+  },
+  "author": {
+    "name": "Hook author",
+    "url": "https://github.com/example"
+  },
+  "source": {
+    "repository": "https://github.com/example/taskmarket-hook",
+    "commit": "0000000",
+    "path": "src/Hook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 84532,
+      "network": "base-sepolia",
+      "hook": "0x0000000000000000000000000000000000000000",
+      "taskmarketDiamond": "0x0A24E9c3b9E31B8258329e187470ACc16497Cec7",
+      "deployment": {
+        "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "blockNumber": 0
+      },
+      "runtimeCodehash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "proxy": {
+        "kind": "none",
+        "upgradeable": false
+      },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 0,
+            "maximum": 0,
+            "methodology": "Replace with measurements from callback-gas.tsv and name the exact source commit and test path."
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": [
+    "checkFund"
+  ],
+  "taskModes": [
+    "bounty",
+    "claim",
+    "pitch",
+    "auction",
+    "benchmark"
+  ],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      {
+        "name": "No hook data",
+        "decoded": null,
+        "encoded": "0x"
+      }
+    ]
+  },
+  "sourceVerification": {
+    "status": "unverified",
+    "verifiers": []
+  },
+  "privilegedRoles": [],
+  "externalDependencies": [
+    {
+      "name": "TaskMarket V20 Diamond",
+      "kind": "contract",
+      "purpose": "Authorizes lifecycle callbacks and supplies canonical TaskMarket state.",
+      "deployments": [
+        {
+          "chainId": 84532,
+          "addresses": [
+            "0x0A24E9c3b9E31B8258329e187470ACc16497Cec7"
+          ],
+          "url": "https://sepolia.basescan.org/address/0x0A24E9c3b9E31B8258329e187470ACc16497Cec7"
+        }
+      ]
+    }
+  ],
+  "liveness": {
+    "requirements": [
+      "The bound TaskMarket Diamond must preserve the reviewed V1 lifecycle and callback semantics."
+    ],
+    "failureMode": "A blocking callback rejection or out-of-gas condition reverts the associated TaskMarket transition.",
+    "recovery": "Correct the task inputs or hook configuration and retry only when the TaskMarket transition remains available."
+  },
+  "security": {
+    "audits": [
+      {
+        "status": "unaudited",
+        "scope": "Generated hook source, deployment, and TaskMarket integration."
+      }
+    ],
+    "notes": [
+      "Automated review and passing tests are not an independent security audit. Replace this note with the exact design risks and trust assumptions."
+    ]
+  },
+  "listing": {
+    "status": "unlisted",
+    "notes": "Draft generated for maintainer review; no listing or endorsement is claimed."
+  },
+  "conformance": {
+    "status": "not-claimed",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": {
+    "status": "not-default"
+  },
+  "x-schema": "https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json"
+}

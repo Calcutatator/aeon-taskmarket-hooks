@@ -11,7 +11,6 @@ metadata:
     - onchain
   requires:
     - HOOK_DEPLOYER_PRIVATE_KEY?
-    - ALCHEMY_API_KEY?
     - ETHERSCAN_API_KEY?
   capabilities:
     - external_api
@@ -41,13 +40,13 @@ Resolve targets only through the staged runner; never accept a model-invented Di
 
 The chain registry additionally pins Diamond revision 20 and canonical USDC (`0x036CbD53842c5426634e7929541eC2318f3dCF7e` on Base Sepolia; `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` on Base). Preflight requires those values and code-backed routes for `diamondVersion`, `usdcToken`, `getDefaultHooks`, and `getTaskHooks`; proxy codehash alone is not treated as facet correctness.
 
-The installed skill stages its own disposable Foundry project at `$TASKMARKET_HOOKBUILD_DIR` (defaulting to a dedicated temporary directory) and keeps its cooperative runner under `skills/deploy-taskmarket-hook/scripts/`. The setup matches `create-taskmarket-hook@0.1.0` and pins Foundry `v1.7.1` plus `daydreamsai/taskmarket-contracts@a85cc8dae76e0fc6da9e463375fd2e385710d442`, with exact dependency pins:
+The installed skill stages its own disposable Foundry project in a fresh temporary directory and keeps its cooperative runner under `skills/deploy-taskmarket-hook/scripts/`. Aeon's write tier permits the bundled Node launcher; that launcher exposes only `stage`, `build-dir`, `chains`, `simulate`, and `broadcast`, hash-checks the two reviewed shell scripts, and strips credentials from staging. The setup matches `create-taskmarket-hook@0.1.0` and pins Foundry `v1.7.1` plus `daydreamsai/taskmarket-contracts@a85cc8dae76e0fc6da9e463375fd2e385710d442`, with exact dependency pins:
 
 - OpenZeppelin Contracts `fcbae5394ae8ad52d8e580a3477db99814b9d565`
 - OpenZeppelin Contracts Upgradeable `7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf`
 - forge-std `1801b0541f4fda118a10798fd3486bb7051c5dd6`
 
-The stage script downloads Foundry from the official release, verifies the platform-specific SHA-256, installs all four source revisions directly, and locks the complete dependency-tree digest. Generated hooks import the official pinned `@taskmarket/contracts/src/hooks/base/BaseTMPHook.sol`; never vendor or import a base hook from an unpinned branch.
+The stage script always downloads Foundry from the official release, verifies the platform-specific archive SHA-256, installs all four source revisions directly, and locks the complete dependency-tree digest. The runner re-verifies that archive and extracts fresh binaries before every simulation or broadcast; it never trusts a PATH-provided executable or an editable tool path. Simulation and broadcast are separate Solidity scripts: the simulator has no broadcast context, while the broadcaster independently checks raw `SKILL_VAR`, chain locks, and reads the burner key inside Forge so it never appears in a command argument. Generated hooks import the official pinned `@taskmarket/contracts/src/hooks/base/BaseTMPHook.sol`; never vendor or import a base hook from an unpinned branch.
 
 ## V1 behavior that every build must respect
 
@@ -70,7 +69,7 @@ This generic generator is deliberately limited to direct, bounded policy and obs
 1. **Dry-run is the default.** Only a leading `arm:` authorizes a deployment transaction. The runner independently checks Aeon's built-in raw workflow input in `SKILL_VAR`; the model's choice of runner mode is not sufficient authorization.
 2. **Mainnet has a triple lock.** Broadcasting to Base requires all three: leading `arm:`, explicit `chain:base`, and repo variable `HOOK_MAINNET_OK=1`. Missing any one exits `DEPLOY_TASKMARKET_HOOK_MAINNET_NOT_AUTHORIZED`.
 3. **One side effect only.** The armed path may deploy and verify hook bytecode. It must not attach the address to a task, call `setDefaultHooks`, create/fund a task, approve or transfer ERC-20s, open a registry PR, or submit metadata. Fork tests may simulate those calls with cheatcode-funded test accounts; broadcasts may not.
-4. **Gas-only burner and explicit trust boundary.** `HOOK_DEPLOYER_PRIVATE_KEY` must belong to a dedicated deployer holding only gas float. Never print it or expand it in a command; invoke only the bundled runner for deployment. As with Aeon's `deploy-uni-hook`, the write-mode agent receives this optional burner and is trusted: the runner prevents command-text secret expansion and adds cooperative checks, but is not signer isolation or an enforceable custody boundary. Enforced isolation requires a separate workflow-owned or brokered signer redesign outside this skill.
+4. **Gas-only burner and explicit trust boundary.** `HOOK_DEPLOYER_PRIVATE_KEY` must belong to a dedicated deployer holding only gas float. Never print it or expand it in a command; invoke only the bundled runner for deployment. The immutable broadcast script reads it with `vm.envUint` only after its own arm and chain checks. As with Aeon's `deploy-uni-hook`, the write-mode agent receives this optional burner and is trusted: this prevents command-line exposure and adds cooperative checks, but is not signer isolation or an enforceable custody boundary. Enforced isolation requires a separate workflow-owned or brokered signer redesign outside this skill.
 5. **All gates are mandatory before broadcast.** Static audit, behavioral tests, local lifecycle integration, and target-chain fork simulation must all pass against the exact generated bytecode.
 6. **Direct immutable code by default.** Proxy hooks and upgradeable delegates undermine the immutable-per-task address guarantee. Reject them unless the brief explicitly requires mutability and the operator explicitly accepts it; even then, stop at dry-run and mark the manifest high-risk. `arm:` alone does not approve a proxy.
 7. **Ambiguous writes are never retried.** If broadcast times out or loses the receipt, query the deterministic address and transaction sender nonce. Record `ambiguous` and stop; never send a second transaction automatically.
@@ -98,31 +97,31 @@ If the same fingerprint already has a confirmed deployment and the deterministic
 
 ### 1. Verify the staged toolchain and target identity
 
-Run the bundled stage script once per fresh Aeon run. It provisions the checksum-pinned toolchain and commit-pinned dependencies without changing Aeon core:
+Run the bundled launcher once per fresh Aeon run. It provisions the checksum-pinned toolchain and commit-pinned dependencies without changing Aeon core or deleting an existing directory:
 
 ```bash
-bash skills/deploy-taskmarket-hook/scripts/stage.sh
+node skills/deploy-taskmarket-hook/scripts/run.mjs stage
 ```
 
-Then require `forge`, `cast`, `jq`, the staged build directory, and the bundled runner. A staging failure emits the generated brief/source plan and exits `DEPLOY_TASKMARKET_HOOK_NO_TOOLCHAIN`.
+Then require the launcher to report an active, ownership-marked build directory. The runner itself checks the freshly extracted `forge`/`cast`, `jq`, source pins, archive hash, and dependency digest. A staging failure emits the generated brief/source plan and exits `DEPLOY_TASKMARKET_HOOK_NO_TOOLCHAIN`.
 
-For every shell operation that reads or writes the staged project, resolve the same path locally:
+Resolve the staged directory with the launcher and use the printed absolute path for every subsequent `Write` or `Edit` operation:
 
 ```bash
-BUILD_DIR="${TASKMARKET_HOOKBUILD_DIR:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/aeon-taskmarket-hookbuild}"
+node skills/deploy-taskmarket-hook/scripts/run.mjs build-dir
 ```
 
 Resolve the row with:
 
 ```bash
-bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh chains
+node skills/deploy-taskmarket-hook/scripts/run.mjs chains
 ```
 
 The mandatory `simulate` gate below checks `eth_chainId`, Diamond runtime codehash, the live default hook list, generated-hook `supportsInterface(0x2187b4de)`, and the immutable caller boundary. A matching proxy codehash establishes target identity, not facet correctness; record the fork block and live default observations. Any mismatch exits `DEPLOY_TASKMARKET_HOOK_TARGET_MISMATCH`.
 
 ### 2. Generate the contract and specific tests
 
-Write the selected contract in `$BUILD_DIR/src/Hook.sol`, its focused assertions in `$BUILD_DIR/test/HookBehavior.t.sol`, and all positive-path values needed by both immutable harnesses in `$BUILD_DIR/test/HookFixture.sol`. Do not edit `HookLifecycle.t.sol`, `HookDiamondLifecycle.t.sol`, `HookFork.t.sol`, the deploy script, the official base hook, Foundry config, remappings, dependency attestation, or chain registry; the runner hash-pins them and fails closed on drift.
+Write the selected contract in `$BUILD_DIR/src/Hook.sol`, its focused assertions in `$BUILD_DIR/test/HookBehavior.t.sol`, and all positive-path values needed by both immutable harnesses in `$BUILD_DIR/test/HookFixture.sol`. Do not edit `HookLifecycle.t.sol`, `HookDiamondLifecycle.t.sol`, `HookFork.t.sol`, either deployment script, the manifest template, the official base hook, Foundry config, remappings, dependency attestation, or chain registry; the runner hash-pins them and fails closed on drift.
 
 Contract requirements:
 
@@ -161,7 +160,7 @@ Use mock/test balances only. The runner parses Forge's executed `[PASS]` cases a
 Run:
 
 ```bash
-bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh simulate <chain>
+node skills/deploy-taskmarket-hook/scripts/run.mjs simulate <chain>
 ```
 
 Fork the selected chain at a recorded block, repeat the target identity checks, bind the exact generated hook to the canonical Diamond, verify its interface/caller boundary, then rehearse the exact deterministic CREATE2 deployment in memory. The live fork is a target-compatibility gate; the real lifecycle and ordering assertions run against the commit-pinned local Diamond fixture. It must not broadcast or spend real USDC. Record the live protocol defaults and remaining custom-hook capacity rather than assuming either.
@@ -188,10 +187,10 @@ For any armed run:
 Run only:
 
 ```bash
-bash skills/deploy-taskmarket-hook/scripts/taskmarket-hook-deploy.sh broadcast <chain>
+node skills/deploy-taskmarket-hook/scripts/run.mjs broadcast <chain>
 ```
 
-The runner owns key access and deterministic CREATE2 deployment. If the predicted address already contains the exact runtime codehash, return `ALREADY_DEPLOYED`. If it contains different code, exit `DEPLOY_TASKMARKET_HOOK_ADDRESS_COLLISION`. Never search for a different salt silently.
+The runner invokes the immutable `BroadcastHook.s.sol`, which independently validates raw arm/mainnet authorization and reads the key from its environment. The simulation script has no broadcast context. If the predicted address already contains the exact runtime codehash, return `ALREADY_DEPLOYED`. If it contains different code, exit `DEPLOY_TASKMARKET_HOOK_ADDRESS_COLLISION`. Never search for a different salt silently.
 
 After a confirmed receipt, read code from the target RPC and require exact runtime-codehash equality. Explorer source verification through `ETHERSCAN_API_KEY` is best-effort and must describe its real status; verification failure does not erase a confirmed deployment. A timeout/unknown receipt is `ambiguous`, not failed, until address/nonce inspection resolves it, and is never auto-retried.
 
@@ -200,19 +199,29 @@ After a confirmed receipt, read code from the target RPC and require exact runti
 Persist the attempt under `output/taskmarket-hooks/<chainId>/<lowercase-address>/`. The successful rehearsal's runner-owned evidence is already present there; preserve it when adding the manifest and attempt metadata:
 
 - `Hook.sol`, behavioral/lifecycle tests, compiler settings, dependency lock/pins.
-- Static audit report, focused test output, local lifecycle output, fork block/hash and traces.
+- Automated source/runtime review report, focused test output, local lifecycle output, fork block/hash and traces.
 - Deployment receipt, creation/runtime codehashes, deterministic factory/salt/address, callback gas table, and explorer verification result.
 - A schema-valid TaskMarket hook manifest at the canonical relative path `hook-registry/manifests/<chainId>/<lowercase-address>.json`, plus a copy with the output evidence.
 
-The manifest schema is `https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json`. Keep `valid`, `listing`, `sourceVerification`, `conformance`, `security.audits`, and `protocolDefault` as separate facts:
+Start from the runner-preserved `hook-manifest.draft.json`; do not invent a different shape. The authoritative schema is `https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json`. Keep schema validity, `listing`, `sourceVerification`, `conformance`, `security.audits`, and `protocolDefault` as separate facts:
 
 - `valid` means schema-valid only.
 - `listing` remains unsubmitted/unlisted; this skill never publishes it.
 - `sourceVerification` is true only after effective runtime source is actually verified.
 - `conformance` cites the exact passing reports and pinned interface.
-- `security.audits` stays empty unless a real, independent published audit URL exists. Agent static analysis is evidence, not an audit certification.
-- `protocolDefault` is false; only TaskMarket governance can make it a default.
+- `security.audits` records `unaudited` unless a real, independent published audit and report URL exist. Agent static analysis is evidence, not an audit certification.
+- `protocolDefault.status` is `not-default`; only TaskMarket governance can make it a default.
 - Set `x-draft: true` until transaction hash, block, address, runtime codehash, gas evidence, source-verification status, and all required evidence links are complete. Never call a merely valid/listed hook audited, verified, safe, or endorsed.
+
+For an actual Hooklist submission, work in the current official `daydreamsai/taskmarket` checkout and place exactly one final, non-draft manifest at `hook-registry/manifests/<chainId>/<lowercase-hook-address>.json`. It must contain one deployment matching that path and the supported canonical Diamond. Then run the repository's authoritative gates exactly:
+
+```bash
+make hook-registry-generate
+make hook-registry
+make contract hook-manifest
+```
+
+Commit both the manifest and `hook-registry/generated/registry.json`. Open a hook-listing request before the registry PR. This skill prepares the files and evidence but never opens the issue/PR or claims those official gates passed unless they actually ran in that repository.
 
 ### 10. Notify and log
 

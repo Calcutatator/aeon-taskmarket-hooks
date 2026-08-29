@@ -30,7 +30,6 @@
       "default_enabled": false,
       "secrets_optional": [
         "HOOK_DEPLOYER_PRIVATE_KEY",
-        "ALCHEMY_API_KEY",
         "ETHERSCAN_API_KEY"
       ],
       "capabilities": [
