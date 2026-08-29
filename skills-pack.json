@@ -1,0 +1,44 @@
+{
+  "name": "Aeon TaskMarket Hooks",
+  "version": "1.0.0",
+  "description": "Brainstorm and safely rehearse or deploy direct TaskMarket V1 hooks, with evidence structured for official Hooklist review.",
+  "author": "Calcutatator",
+  "license": "MIT",
+  "homepage": "https://github.com/Calcutatator/aeon-taskmarket-hooks",
+  "skills": [
+    {
+      "slug": "taskmarket-hook-idea",
+      "path": "skills/taskmarket-hook-idea",
+      "description": "Brainstorm exactly five buildable TaskMarket V1 hooks with xAI, deduplicated against prior work and Hooklist records.",
+      "category": "crypto",
+      "schedule": "workflow_dispatch",
+      "default_enabled": false,
+      "secrets_required": [
+        "XAI_API_KEY"
+      ],
+      "capabilities": [
+        "external_api",
+        "sends_notifications"
+      ]
+    },
+    {
+      "slug": "deploy-taskmarket-hook",
+      "path": "skills/deploy-taskmarket-hook",
+      "description": "Generate, review, behavior-test, locally integrate, fork-simulate, and optionally deploy a direct immutable TaskMarket V1 hook.",
+      "category": "crypto",
+      "schedule": "workflow_dispatch",
+      "default_enabled": false,
+      "secrets_optional": [
+        "HOOK_DEPLOYER_PRIVATE_KEY",
+        "ALCHEMY_API_KEY",
+        "ETHERSCAN_API_KEY"
+      ],
+      "capabilities": [
+        "external_api",
+        "onchain_writes",
+        "writes_external_host",
+        "sends_notifications"
+      ]
+    }
+  ]
+}
